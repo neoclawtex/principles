@@ -353,13 +353,16 @@
                     </div>
                     <div class="stat-box">
                         <span class="stat-value" id="statLocked">0</span>
-                        <span class="stat-label">Locked In (&gt;90%)</span>
+                        <span class="stat-label">Strongly Biased (&gt;90%)</span>
                     </div>
                     <div class="stat-box">
                         <span class="stat-value" id="statSpread">—</span>
                         <span class="stat-label">Spread of Outcomes</span>
                     </div>
                 </div>
+                <p style="font-size:0.8rem; color:var(--text-muted); margin-top:10px;">
+                    Trajectory color reflects current proportion — matching the histogram below. <em>Strongly biased</em> marks histories above 90% or below 10%; the Pólya urn can converge to any proportion, so this threshold is a marker, not a boundary.
+                </p>
             </div>
 
             <!-- Outcome distribution -->
@@ -391,7 +394,7 @@
                     </div>
                 </div>
                 <div class="btn-row">
-                    <button class="btn btn-primary" id="btnPause" onclick="togglePause()">Pause</button>
+                    <button class="btn btn-primary" id="btnStart" onclick="startOrPause()">Start</button>
                     <button class="btn btn-secondary" onclick="reset()">Reset</button>
                     <button class="btn btn-secondary" onclick="resetSameSeed()">Replay Same Seed</button>
                     <button class="btn btn-secondary" onclick="runToEnd()">Run to End</button>
@@ -473,6 +476,7 @@
 
     // ── State ──────────────────────────────────────────────────────────────────
     let urns = [];          // Each urn: { red, blue, history: [proportions] }
+    let running = false;    // true once user clicks Start
     let paused = false;
     let animHandle = null;
     let completedHistories = []; // final proportions of finished urns (for histogram)
@@ -505,9 +509,10 @@
         return sequences;
     }
 
-    // Path colors: a palette of distinct but harmonious hues
-    function pathColor(i, n, alpha) {
-        const hue = (i / n) * 300 + 10; // 10–310 degrees, avoids wrapping red into red
+    // Color a trajectory by its current proportion p (0=blue → 0.5=yellow → 1=red)
+    // Same hue mapping as the histogram, so visual connection is direct.
+    function pathColor(p, alpha) {
+        const hue = p * 300 + 10; // 10 (blue-ish) → 160 (green, at 0.5) → 310 (red-ish)
         return `hsla(${hue}, 60%, 55%, ${alpha})`;
     }
 
@@ -534,8 +539,9 @@
 
     function reset(seed) {
         clearTimeout(animHandle);
+        running = false;
         paused = false;
-        document.getElementById('btnPause').textContent = 'Pause';
+        document.getElementById('btnStart').textContent = 'Start';
 
         const numPaths  = parseInt(document.getElementById('numPaths').value);
         const initBalls = parseInt(document.getElementById('initBalls').value);
@@ -556,12 +562,24 @@
         completedHistories = [];
         updateStats();
         drawAll();
-        schedule();
+        // Do NOT auto-start — wait for user to click Start
     }
 
     function resetSameSeed() {
         // Replay with exact same seed — produces bit-for-bit identical outcomes
         reset(currentSeed);
+    }
+
+    function startOrPause() {
+        if (!running) {
+            // First start
+            running = true;
+            paused = false;
+            document.getElementById('btnStart').textContent = 'Pause';
+            schedule();
+        } else {
+            togglePause();
+        }
     }
 
     function step() {
@@ -586,16 +604,15 @@
     }
 
     function runToEnd() {
+        clearTimeout(animHandle);
+        running = true;
         paused = true;
-        cancelAnimationFrame(animHandle);
-        document.getElementById('btnPause').textContent = 'Resume';
-        while (urns.some(u => u.history.length <= MAX_DRAWS)) {
-            for (const urn of urns) {
-                while (urn.history.length <= MAX_DRAWS) drawFromUrn(urn);
-                if (!urn._recorded) {
-                    completedHistories.push(urn.history[urn.history.length - 1]);
-                    urn._recorded = true;
-                }
+        document.getElementById('btnStart').textContent = 'Resume';
+        for (const urn of urns) {
+            while (urn.history.length <= MAX_DRAWS) drawFromUrn(urn);
+            if (!urn._recorded) {
+                completedHistories.push(urn.history[urn.history.length - 1]);
+                urn._recorded = true;
             }
         }
         updateStats();
@@ -606,11 +623,11 @@
     const SPEEDS = [80, 40, 12]; // ms per frame for speeds 1, 2, 3
 
     function schedule() {
-        if (paused) return;
+        if (paused || !running) return;
         const speedIdx = parseInt(document.getElementById('speed').value) - 1;
         const delay = SPEEDS[speedIdx];
         animHandle = setTimeout(() => {
-            if (!paused) {
+            if (!paused && running) {
                 const active = step();
                 if (active) schedule();
             }
@@ -619,7 +636,7 @@
 
     function togglePause() {
         paused = !paused;
-        document.getElementById('btnPause').textContent = paused ? 'Resume' : 'Pause';
+        document.getElementById('btnStart').textContent = paused ? 'Resume' : 'Pause';
         if (!paused) schedule();
     }
 
@@ -711,16 +728,16 @@
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // Draw each urn's history
-        const n = urns.length;
+        // Draw each urn's history — colored by current proportion (same scale as histogram)
         urns.forEach((urn, i) => {
             const history = urn.history;
             if (history.length < 2) return;
 
-            const isLocked = history[history.length - 1] > 0.9 || history[history.length - 1] < 0.1;
-            const alpha = isLocked ? 0.85 : 0.55;
-            ctx.strokeStyle = pathColor(i, n, alpha);
-            ctx.lineWidth = isLocked ? 1.8 : 1.2;
+            const currentP = history[history.length - 1];
+            const isStrong = currentP > 0.9 || currentP < 0.1;
+            const alpha = isStrong ? 0.9 : 0.6;
+            ctx.strokeStyle = pathColor(currentP, alpha);
+            ctx.lineWidth = isStrong ? 2.0 : 1.2;
 
             ctx.beginPath();
             history.forEach((p, t) => {
